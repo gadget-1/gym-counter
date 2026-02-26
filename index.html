@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Fitness Counter</title>
+    
+    <style>
+        body {
+            background-color: #121212;
+            color: white;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            margin: 0;
+            overflow: auto;
+            padding: 20px 0;
+        }
+
+        .container {
+            text-align: center;
+            background: #1e1e1e;
+            padding: 20px;
+            border-radius: 20px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+            max-width: 90%;
+        }
+
+        h1 { margin-bottom: 10px; font-size: 24px; color: #00ff00; }
+
+        canvas {
+            border-radius: 15px;
+            background: #000;
+            width: 100%;
+            max-width: 640px;
+            max-height: 60vh;
+            height: auto;
+            transform: scaleX(-1); 
+        }
+
+        .stats-board {
+            display: flex;
+            justify-content: space-around;
+            margin-top: 20px;
+            gap: 15px;
+        }
+
+        .stat-item {
+            background: #2d2d2d;
+            padding: 15px 25px;
+            border-radius: 15px;
+            flex: 1;
+        }
+
+        .label { display: block; font-size: 12px; color: #aaa; text-transform: uppercase; }
+        .value { font-size: 36px; font-weight: bold; color: #00ff00; }
+        #status { color: #ff9800; }
+
+        .controls { margin-top: 15px; }
+        button {
+            padding: 10px 25px;
+            font-size: 16px;
+            background: #ff4444;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: 0.3s;
+        }
+        button:hover { background: #cc0000; transform: scale(1.05); }
+    </style>
+
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils"></script>
+</head>
+
+<body>
+
+    <div class="container">
+        <h1>AI WORKOUT COUNTER</h1>
+        
+        <div class="video-container">
+            <video id="input_video" style="display:none"></video>
+            <canvas id="output_canvas" width="640px" height="480px"></canvas>
+        </div>
+
+        <div class="stats-board">
+            <div class="stat-item">
+                <span class="label">REPS</span>
+                <span id="count" class="value">0</span>
+            </div>
+            <div class="stat-item">
+                <span class="label">STATUS</span>
+                <span id="status" class="value">READY</span>
+            </div>
+        </div>
+
+        <div class="controls">
+            <button onclick="resetCounter()">RESET COUNTER</button>
+        </div>
+    </div>
+
+    <script>
+        const videoElement = document.getElementById('input_video');
+        const canvasElement = document.getElementById('output_canvas');
+        const canvasCtx = canvasElement.getContext('2d');
+        const countElement = document.getElementById('count');
+        const statusElement = document.getElementById('status');
+
+        let counter = 0;
+        let stage = "up"; 
+
+        function resetCounter() {
+            counter = 0;
+            countElement.innerText = counter;
+            stage = "up";
+            statusElement.innerText = "RESET!";
+            statusElement.style.color = "#ff9800";
+        }
+
+        function calculateAngle(a, b, c) {
+            let radians = Math.atan2(c.y - b.y, c.x - b.x) - Math.atan2(a.y - b.y, a.x - b.x);
+            let angle = Math.abs((radians * 180.0) / Math.PI);
+            if (angle > 180.0) angle = 360 - angle;
+            return angle;
+        }
+
+        function onResults(results) {
+            if (!results.poseLandmarks) {
+                statusElement.innerText = "WAITING...";
+                return;
+            }
+
+            canvasCtx.save();
+            canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+            canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
+            
+            drawConnectors(canvasCtx, results.poseLandmarks, POSE_CONNECTIONS, {color: '#00FF00', lineWidth: 4});
+            drawLandmarks(canvasCtx, results.poseLandmarks, {color: '#FF0000', lineWidth: 2});
+
+            const landmarks = results.poseLandmarks;
+            const lS = landmarks[11], lE = landmarks[13], lW = landmarks[15];
+            const rS = landmarks[12], rE = landmarks[14], rW = landmarks[16];
+
+            const leftAngle = calculateAngle(lS, lE, lW);
+            const rightAngle = calculateAngle(rS, rE, rW);
+
+            // 使用平均角度
+            const avgAngle = (leftAngle + rightAngle) / 2;
+
+            // 计数逻辑
+            if (avgAngle > 160) {
+                stage = "up";
+                statusElement.innerText = "GO DOWN";
+                statusElement.style.color = "#00ff00";
+            }
+            
+            if (avgAngle < 90 && stage === "up") {
+                stage = "down";
+                counter++;
+                countElement.innerText = counter;
+                statusElement.innerText = "UP!";
+                statusElement.style.color = "#ff9800";
+
+                // 强制英文语音播报
+                const msg = new SpeechSynthesisUtterance(counter.toString());
+                msg.lang = 'en-US';
+                msg.rate = 1.2;
+                window.speechSynthesis.speak(msg);
+            }
+
+            canvasCtx.restore();
+        }
+
+        const pose = new Pose({
+            locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`
+        });
+
+        pose.setOptions({
+            modelComplexity: 1,
+            smoothLandmarks: true,
+            minDetectionConfidence: 0.5,
+            minTrackingConfidence: 0.5
+        });
+
+        pose.onResults(onResults);
+
+        const camera = new Camera(videoElement, {
+            onFrame: async () => {
+                await pose.send({image: videoElement});
+            },
+            width: 640,
+            height: 480
+        });
+        camera.start();
+    </script>
+</body>
+</html>
